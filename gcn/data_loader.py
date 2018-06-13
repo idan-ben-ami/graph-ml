@@ -43,10 +43,11 @@ def handle_matrix_concat(mx, should_normalize=True):
     return sparse.vstack([mx, mx_t])  # vstack: below, hstack: near
 
 
-def handle_matrix_symmetric(mx):
+def handle_matrix_symmetric(mx, should_normalize=True):
     # build symmetric adjacency matrix
     mx += (mx.T - mx).multiply(mx.T > mx)
-    return symmetric_normalization(mx + sparse.eye(mx.shape[0]))
+    mx += sparse.eye(mx.shape[0])
+    return symmetric_normalization(mx) if should_normalize else mx
 
 
 def sparse_mx_to_torch_sparse_tensor(sparse_mx) -> torch.sparse.FloatTensor:
@@ -58,22 +59,17 @@ def sparse_mx_to_torch_sparse_tensor(sparse_mx) -> torch.sparse.FloatTensor:
     return torch.sparse.FloatTensor(indices, values, shape)
 
 
-# if "citeseer" == dataset:
-#     Taking the largest
-#     max_subgnx = max(nx.connected_component_subgraphs(self._gnx.to_undirected()), key=len)
-#     self._gnx = self._gnx.subgraph(max_subgnx)
 class GraphLoader(object):
-    def __init__(self, data_dir, features_meta, is_max_connected=False, cuda_num=None, logger=None):
+    def __init__(self, data_dir, is_max_connected=False, norm_adj=True, cuda_num=None, logger=None):
         super(GraphLoader, self).__init__()
         self._logger = EmptyLogger() if logger is None else logger
         self._data_path = data_dir
         self._cuda_num = cuda_num
-        self._features_meta = features_meta
         self._is_max_connected = is_max_connected
 
         self._logger.debug("Loading %s dataset...", self._data_path)
         features_path = self._features_path()
-        gpath = os.path.realpath(os.path.join(features_path, "..", "gnx.pkl"))
+        gpath = os.path.realpath(os.path.join(features_path, "gnx.pkl"))
         self._gnx = pickle.load(open(gpath, "rb"))
 
         self._nodes_order = sorted(self._gnx)
@@ -87,9 +83,9 @@ class GraphLoader(object):
 
         # Adjacency matrices
         adj = nx.adjacency_matrix(self._gnx, nodelist=self._nodes_order).astype(DTYPE)
-        self._adj = handle_matrix_symmetric(adj)
+        self._adj = handle_matrix_symmetric(adj, should_normalize=norm_adj)
         self._adj = sparse_mx_to_torch_sparse_tensor(self._adj).to_dense()
-        self._adj_rt = handle_matrix_concat(adj, should_normalize=True)
+        self._adj_rt = handle_matrix_concat(adj, should_normalize=norm_adj)
         self._adj_rt = sparse_mx_to_torch_sparse_tensor(self._adj_rt).to_dense()
 
         self._train_set = self._test_set = None
@@ -98,7 +94,7 @@ class GraphLoader(object):
 
     def _activate_cuda(self, *items):
         if self._cuda_num is None:
-            return items
+            return items[0] if 1 == len(items) else items
         if 1 == len(items):
             return items[0].cuda(self._cuda_num)
         return [x.cuda(self._cuda_num) for x in items]
@@ -119,6 +115,10 @@ class GraphLoader(object):
     def labels(self):
         labels = torch.LongTensor(np.where(self._ident_labels)[1])
         return self._activate_cuda(labels)
+
+    @property
+    def distinct_labels(self):
+        return sorted(self._labels.keys())
 
     @property
     def train_idx(self):
@@ -164,9 +164,7 @@ class GraphLoader(object):
     def _features_path(self):
         return os.path.join(self._data_path, "features%d" % (self._is_max_connected,))
 
-    def split_train(self, train_p, features_meta=None):
-        if features_meta is None:
-            features_meta = self._features_meta
+    def split_train(self, train_p, features_meta):
         train_set, val_set, self._train_idx, self._val_idx = train_test_split(self._train_set, self._base_train_idx,
                                                                               test_size=1 - train_p, shuffle=True)
 
@@ -180,49 +178,3 @@ class GraphLoader(object):
 
         ratio = 10 ** np.ceil(np.log10(abs(np.mean(self._topo_mx) / np.mean(self._bow_mx))))
         self._topo_mx /= ratio
-
-
-        # def load(self, train_p, features_meta, data_type, feature_path=None):
-        #      if feature_path is None:
-        #          feature_path = self.dataset_path
-        #
-        #      train_set, val_set, train_idx, val_idx = train_test_split(self._train_set, self._train_idx,
-        #                                                                test_size=1 - train_p, shuffle=True)
-        #      train_set = set(train_set)
-        #
-        #      if data_type in ["symmetric", "asymmetric"]:
-        #          features = GraphFeatures(self._gnx, features_meta, dir_path=feature_path, logger=self._logger)
-        #          features.build(include=train_set)
-        #
-        #          add_ones = bool({"first_neighbor_histogram", "second_neighbor_histogram"}.difference(features_meta))
-        #          topo_mx = features.to_matrix(add_ones=add_ones, dtype=DTYPE, mtype=np.matrix, should_zscore=True)
-        #          topo_mx /= 1000
-        #      else:
-        #          topo_mx = np.matrix([], dtype=DTYPE).reshape(bow_mx.shape[0], 0)
-        #
-        #      labels = self._encode_onehot_gnx()
-        #
-        #      adj = nx.adjacency_matrix(self._gnx, nodelist=self._nodes_order).astype(DTYPE)
-        #
-        #      if data_type == "symmetric":
-        #          adj, self.layer_model = handle_matrix_symmetric(adj), GraphConvolution
-        #      elif data_type == "asymmetric":
-        #          adj1, self.layer_model = handle_matrix_concat(adj, should_normalize=True), AsymmetricGCN
-        #          adj2 = handle_matrix_symmetric(adj)
-        #      elif data_type == "content":
-        #          adj, self.layer_model = handle_matrix_symmetric(adj), GraphConvolution
-        #      else:
-        #          raise ValueError("data_type should be [symmetric| asymmetric| content")
-        #
-        #      bow_feat = torch.FloatTensor(bow_mx)
-        #      topo_feat = torch.FloatTensor(topo_mx)
-        #
-        #      labels = torch.LongTensor(np.where(labels)[1])
-        #      adj1 = sparse_mx_to_torch_sparse_tensor(adj1).to_dense()
-        #      adj2 = sparse_mx_to_torch_sparse_tensor(adj2).to_dense()
-        #
-        #      # train_idx = torch.LongTensor(train_idx)
-        #      # val_idx = torch.LongTensor(val_idx)
-        #      # idx_test = torch.LongTensor(self._test_idx)
-        #
-        #      return self.activate_cuda(adj1, adj2, bow_feat, topo_feat, labels, train_idx, val_idx, idx_test)
