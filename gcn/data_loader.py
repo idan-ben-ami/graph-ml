@@ -92,6 +92,10 @@ class GraphLoader(object):
         self._train_idx = self._test_idx = self._base_train_idx = None
         self._val_idx = None
 
+    @@property
+    def is_graph_directed(self):
+        return self._gnx.is_directed()
+
     def _activate_cuda(self, *items):
         if self._cuda_num is None:
             return items[0] if 1 == len(items) else items
@@ -171,7 +175,7 @@ class GraphLoader(object):
         features_path = self._features_path()
         features = GraphFeatures(self._gnx, features_meta, dir_path=features_path,
                                  logger=self._logger, is_max_connected=self._is_max_connected)
-        features.build(include=set(train_set), should_dump=True)
+        features.build(include=set(train_set), should_dump=False)
 
         add_ones = bool({"first_neighbor_histogram", "second_neighbor_histogram"}.intersection(features_meta))
         self._topo_mx = features.to_matrix(add_ones=add_ones, dtype=np.float64, mtype=np.matrix, should_zscore=True)

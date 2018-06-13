@@ -3,9 +3,9 @@
 
 import argparse
 import logging
+import pickle
 import random
 import time
-import pickle
 from itertools import chain
 
 import numpy as np
@@ -15,25 +15,19 @@ import torch.optim as optim
 from torch.autograd import Variable
 
 import model_meter
-from feature_meta import NODE_FEATURES
-from features_algorithms.vertices.neighbor_nodes_histogram import nth_neighbor_calculator
-from features_infra.feature_calculators import FeatureMeta
+from feature_meta import NODE_FEATURES, DIRECTED_NEIGHBOR_FEATURES, UNDIRECTED_NEIGHBOR_FEATURES
 from gcn import *
 from gcn.data_loader import GraphLoader
 from gcn.layers import AsymmetricGCN
 from gcn.models import GCNCombined, GCN
 from loggers import PrintLogger, multi_logger, EmptyLogger, CSVLogger, FileLogger
 
-NEIGHBOR_FEATURES = {
-    "first_neighbor_histogram": FeatureMeta(nth_neighbor_calculator(1), {"fnh", "first_neighbor"}),
-    "second_neighbor_histogram": FeatureMeta(nth_neighbor_calculator(2), {"snh", "second_neighbor"}),
-}
 
-
-def get_features(feat_type):
-    all_features = {"neighbors": [NEIGHBOR_FEATURES],
+def get_features(feat_type, is_directed):
+    neighbor_features = DIRECTED_NEIGHBOR_FEATURES if is_directed else UNDIRECTED_NEIGHBOR_FEATURES
+    all_features = {"neighbors": [neighbor_features],
                     "features": [NODE_FEATURES],
-                    "combined": [NEIGHBOR_FEATURES, NODE_FEATURES],
+                    "combined": [neighbor_features, NODE_FEATURES],
                     }
 
     return dict(y for x in all_features[feat_type] for y in x.items())
@@ -84,16 +78,16 @@ class ModelRunner:
         opt4 = optim.Adam(model4.parameters(), lr=self.conf["lr"], weight_decay=self.conf["weight_decay"])
 
         return {
-            # "kipf": {
-            #     "model": model1, "optimizer": opt1,
-            #     "arguments": [self.loader.bow_mx, self.loader.adj_mx],
-            #     "labels": self.loader.labels,
-            # },
-            # "our_combined": {
-            #     "model": model2, "optimizer": opt2,
-            #     "arguments": [self.loader.bow_mx, self.loader.topo_mx, self.loader.adj_rt_mx],
-            #     "labels": self.loader.labels,
-            # },
+            "kipf": {
+                "model": model1, "optimizer": opt1,
+                "arguments": [self.loader.bow_mx, self.loader.adj_mx],
+                "labels": self.loader.labels,
+            },
+            "our_combined": {
+                "model": model2, "optimizer": opt2,
+                "arguments": [self.loader.bow_mx, self.loader.topo_mx, self.loader.adj_rt_mx],
+                "labels": self.loader.labels,
+            },
             "topo_sym": {
                 "model": model3, "optimizer": opt3,
                 "arguments": [self.loader.topo_mx, self.loader.adj_mx],
@@ -107,7 +101,7 @@ class ModelRunner:
         }
 
     def run(self, train_p, feat_type):
-        features_meta = get_features(feat_type)
+        features_meta = get_features(feat_type, is_directed=self.loader.is_graph_directed)
         self.loader.split_train(train_p, features_meta)
 
         models = self._get_models()
