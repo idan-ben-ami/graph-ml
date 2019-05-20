@@ -92,7 +92,7 @@ class GraphLoader(object):
         self._train_idx = self._test_idx = self._base_train_idx = None
         self._val_idx = None
 
-    @@property
+    @property
     def is_graph_directed(self):
         return self._gnx.is_directed()
 
